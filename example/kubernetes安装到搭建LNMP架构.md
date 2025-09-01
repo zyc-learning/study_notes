@@ -1,4 +1,4 @@
-# k8s安装到搭建LNMP架构
+# kubernetes安装到搭建LNMP架构
 
 ## 一、前置准备
 
@@ -468,3 +468,4 @@ php:
 
 
 然后就可以使用wordpress搭建自己的博客了
+
