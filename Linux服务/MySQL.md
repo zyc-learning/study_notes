@@ -9,27 +9,34 @@
 - 下载二进制包并且解压
 
 ```shell
-wget https://downloads.mysql.com/archives/get/p/23/file/mysql-5.6.40-linux-glibc2.12-x86_64.tar.gz
-tar xzvf mysql-5.6.40-linux-glibc2.12-x86_64.tar.gz
+[root@localhost ~]# wget https://downloads.mysql.com/archives/get/p/23/file/mysql-5.6.40-linux-glibc2.12-x86_64.tar.gz
+[root@localhost ~]# tar xzvf mysql-5.6.40-linux-glibc2.12-x86_64.tar.gz
 ```
 
 ```shell
-mkdir /application
-mv mysql-5.6.40-linux-glibc2.12-x86_64 /application/mysql-5.6.40
-ln -s /application/mysql-5.6.40 /application/mysql #为了后续写的脚本，方便监控mysql
-cd /application/mysql/support-files    #该文件夹有mysql初始化（预设）配置文件，覆盖文件是因为注释更全。
-cp my-default.cnf /etc/my.cnf
-cp：是否覆盖"/etc/my.cnf"？ y
-cp mysql.server /etc/init.d/mysqld    #mysql.server包含如何启动mysql的脚本命令，让系统知道通过该命令启动mysql时的动作，该目录存放系统中各种服务的启动/停止脚本
-cd /application/mysql/scripts
-useradd mysql -s /sbin/nologin -M
- yum -y install autoconf    #不然会报错
- yum install -y perl-Sys-Hostname#rockkyLinux9新增suo
-./mysql_install_db --user=mysql --basedir=/application/mysql --data=/application/mysql/data
-vim /etc/profile.d/mysql.sh    #写到环境变量的子配置文件内，未修改前只能使用/bin/mysql的命令才能启用，而不能全局使用
+[root@localhost ~]# mkdir /application
+[root@localhost ~]# mv mysql-5.6.40-linux-glibc2.12-x86_64 /application/mysql-5.6.40
+[root@localhost ~]# ln -s /application/mysql-5.6.40 /application/mysql 
+#为了后续写的脚本，方便监控mysql
+
+[root@localhost ~]# cd /application/mysql/support-files    
+#该文件夹有mysql初始化（预设）配置文件，覆盖文件是因为注释更全。
+
+[root@localhost ~]# cp my-default.cnf /etc/my.cnf
+[root@localhost ~]# mkdir /etc/init.d
+[root@localhost ~]# cp mysql.server /etc/init.d/mysqld    
+# mysql.server包含如何启动mysql的脚本命令，让系统知道通过该命令启动mysql时的动作，该目录存放系统中各种服务的启动/停止脚本
+[root@localhost ~]# cd /application/mysql/scripts
+[root@localhost scripts]# useradd mysql -s /sbin/nologin -M
+
+[root@localhost scripts]# yum -y install autoconf
+[root@localhost scripts]# yum install -y perl-Sys-Hostname
+[root@localhost scripts]# ./mysql_install_db --user=mysql --basedir=/application/mysql --data=/application/mysql/data
+[root@localhost ~]# vim /etc/profile.d/mysql.sh    
+#写到环境变量的子配置文件内，未修改前只能使用/bin/mysql的命令才能启用，而不能全局使用
 export PATH="/application/mysql/bin:$PATH"
 
-source /etc/profile    #否则要重启系统才生效
+[root@localhost ~]# source /etc/profile    #否则要重启系统才生效
 ```
 
 
@@ -37,16 +44,16 @@ source /etc/profile    #否则要重启系统才生效
 **需要注意，官方编译的二进制包默认是在/usr/local目录下的，我们需要修改配置文件**
 
 ```shell
-sed -i 's#/usr/local#/application#g' /etc/init.d/mysqld /application/mysql/bin/mysqld_safe
+[root@localhost ~]#sed -i 's#/usr/local#/application#g' /etc/init.d/mysqld /application/mysql/bin/mysqld_safe
 ```
+
+
 
 此时不可以通过systemctl命令启动，只能通过/etc/init.d/mysql start启动（nginx也是，如果此时通过这样的命令启动Nginx，会导致systemctl start Nginx失败，因为冲突。）
 
-
-
 ```shell
 #创建systemd管理文件，并且测试是否正常使用
-vim /usr/lib/systemd/system/mysqld.service
+[root@localhost ~]# vim /usr/lib/systemd/system/mysqld.service
 [Unit]
 Description=MySQL Server
 Documentation=man:mysqld(8)
@@ -58,20 +65,31 @@ WantedBy=multi-user.target
 [Service]
 User=mysql
 Group=mysql
-ExecStart=/application/mysql/bin/mysqld --defaults-file=/etc/my.cnf    #强制从my.cnf读配置，不然会从多个路径读配置
+ExecStart=/application/mysql/bin/mysqld --defaults-file=/etc/my.cnf    
+#强制从my.cnf读配置，不然会从多个路径读配置
 LimitNOFILE = 5000
-server_id = 1    #用作主从的时候生效
+server_id = 1    
+#用作主从的时候生效
 
-vim /etc/my.cnf
- basedir = /application/mysql/
- datadir = /application/mysql/data
+[root@localhost ~]# vim /etc/my.cnf
+basedir = /application/mysql/
+datadir = /application/mysql/data
 
-systemctl daemon-reload
-systemctl start mysqld
-systemctl enable mysqld
+# 关闭防火墙和selinux，负责会因为权限问题启动不了
+[root@localhost scripts]# setenforce 0
+[root@localhost scripts]# systemctl stop firewalld
+
+# 启动mysqld服务
+[root@localhost ~]# systemctl daemon-reload
+[root@localhost ~]# systemctl start mysqld
+[root@localhost ~]# systemctl enable mysqld
 #此时ss -ntl 可以看到3306端口
-mysqladmin -uroot password '123456'
-mysql -uroot -p123456
+
+[root@localhost ~]# mysqladmin -uroot password '123456
+
+# 由于RockyLinux9版本的lib库较新，为了适配mysql5.6版本，我们通过软连接的方式降级
+[root@localhost ~]# ln -s /usr/lib64/libncurses.so.6 /usr/lib64/libncurses.so.5
+[root@localhost ~]# ln -s /usr/lib64/libtinfo.so.6 /usr/lib64/libtinfo.so.5
 ```
 
 
@@ -3511,3 +3529,4 @@ COMMIT可能会导致失败，类似于快照事务隔离级别的失败场景;
 多主模式(也就是多写模式) 不支持SERIALIZABLE事务隔离级别;
 多主模式不能完全支持级联外键约束;
 多主模式不支持在不同节点上对同一个数据库对象并发执行DDL(在不同节点上对同一行并发进行RW事务，后发起的事务会失败);
+
