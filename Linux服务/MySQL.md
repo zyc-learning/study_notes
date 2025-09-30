@@ -8,6 +8,10 @@
 
 - 下载二进制包并且解压
 
+#### 5.6.40
+
+RHEL8及以前的版本支持5.x的版本，RHEL 8标记5.x“模块即将废弃”
+
 ```shell
 [root@localhost ~]# wget https://downloads.mysql.com/archives/get/p/23/file/mysql-5.6.40-linux-glibc2.12-x86_64.tar.gz
 [root@localhost ~]# tar xzvf mysql-5.6.40-linux-glibc2.12-x86_64.tar.gz
@@ -90,6 +94,276 @@ datadir = /application/mysql/data
 # 由于RockyLinux9版本的lib库较新，为了适配mysql5.6版本，我们通过软连接的方式降级
 [root@localhost ~]# ln -s /usr/lib64/libncurses.so.6 /usr/lib64/libncurses.so.5
 [root@localhost ~]# ln -s /usr/lib64/libtinfo.so.6 /usr/lib64/libtinfo.so.5
+```
+
+
+
+#### 8.0.43
+
+RHEL8及以后的版本主推版本
+
+```shell
+wget https://dev.mysql.com/get/Downloads/MySQL-8.0/mysql-8.0.43-linux-glibc2.28-x86_64.tar.xz
+tar -Jxvf mysql-8.0.43-linux-glibc2.28-x86_64.tar.xz # 解压xz压缩包，使用-J：使用 xz 解压缩文件
+mkdir /application
+mv mysql-8.0.43-linux-glibc2.28-x86_64 /application/mysql-8.0.43
+ln -s /application/mysql-8.0.43/ /application/mysql
+
+mkdir /application/mysql/data /application/mysql/logs /application/mysql/config /application/mysql/binlog /application/mysql/tmp
+
+useradd mysql -s /sbin/nologin -M
+
+# 赋予 mysql 用户对安装目录、数据目录、日志目录等的权限
+chown -R mysql:mysql /application/mysql
+
+# 确保数据目录、日志目录等有正确的权限
+chown -R mysql:mysql /application/mysql/data
+chown -R mysql:mysql /application/mysql/logs
+chown -R mysql:mysql /application/mysql/binlog
+chown -R mysql:mysql /application/mysql/config
+chown -R mysql:mysql /application/mysql/tmp
+
+创建自定义配置文件
+vim /application/mysql/config/my.cnf
+[mysqld]
+# ===================== 基本路径配置 =====================
+basedir = /application/mysql
+datadir = /application/mysql/data
+tmpdir = /application/mysql/tmp
+
+# ===================== 性能优化配置 =====================
+# InnoDB配置
+innodb_buffer_pool_size = 4G  # 根据系统内存大小调整
+innodb_log_buffer_size = 64M
+innodb_log_file_size = 256M
+innodb_flush_log_at_trx_commit = 1
+innodb_flush_method = O_DIRECT
+innodb_io_capacity = 2000
+
+# 临时表配置
+tmp_table_size = 64M
+max_heap_table_size = 64M
+
+# 连接数设置
+max_connections = 500
+
+# ===================== 日志配置 =====================
+# 错误日志
+log-error = /application/mysql/logs/mysql-error.log
+
+# 慢查询日志
+slow_query_log = 1
+slow_query_log_file = /application/mysql/logs/mysql-slow.log
+long_query_time = 2  # 记录执行时间超过 2 秒的查询
+
+# 通用查询日志
+general_log = 1
+general_log_file = /application/mysql/logs/mysql-general.log
+
+# 二进制日志配置（用于复制、恢复等）
+log-bin = /application/mysql/binlog/mysql-bin
+server-id = 1
+binlog_expire_logs_seconds = 604800 # 设置二进制日志的保留秒数，7天，604800秒
+max_binlog_size = 100M
+
+# ===================== 安全配置 =====================
+# 启用 SSL 加密（如果需要）
+ssl-ca = /application/mysql/ssl/ca-cert.pem
+ssl-cert = /application/mysql/ssl/server-cert.pem
+ssl-key = /application/mysql/ssl/server-key.pem
+
+# ===================== 字符集设置 =====================
+character-set-server = utf8mb4
+collation-server = utf8mb4_unicode_ci
+
+# ===================== 主从复制配置 =====================
+# 如果有主从复制，确保每个实例的 server-id 唯一
+# 启用二进制日志及设置 server-id
+server-id = 1
+
+# ===================== 系统资源配置 =====================
+# 文件描述符限制（适用于大连接数的系统）
+[mysqld_safe]
+ulimit = 65535
+
+赋权给mysql用户
+chown mysql:mysql /application/mysql/config/my.cnf
+chmod 644 /application/mysql/config/my.cnf
+cd /application/mysql/bin
+# 执行安装命令，按my.cnf进行安装
+./mysqld --defaults-file=/application/mysql/config/my.cnf \
+         --user=mysql \
+         --initialize
+         
+# 之后安装完成，没有任何提示，如何登录呢？
+# 找到logs文件夹，因为我们没有设置root的密码，所以在mysql-error.log日志里，会打印临时的root密码
+cat /application/mysql/logs/mysql-error.log   #之后会有这么一行，看到最末尾：
+2024-11-24T09:17:38.505581Z 6 [Note] [MY-010454] [Server] A temporary password is generated for root@localhost: 9lCafpyeiI&3
+
+9lCafpyeiI&3 这个就是临时密码，等会我们启动mysql服务后，把它给改了
+
+启动mysql服务，修改root密码、新建用户、允许远程连接登录
+cd /application/mysql/mysql-8.0.43/bin
+sudo -u mysql ./mysqld_safe --defaults-file=/application/mysql/config/my.cnf &
+# 开始登录修改root密码
+./mysql -uroot -p
+9lCafpyeiI&3
+
+ALTER USER 'root'@'localhost' IDENTIFIED BY '123456';
+flush privileges;
+
+# 将mysql注册为系统服务
+vim /etc/systemd/system/mysql.service
+[Unit]
+Description=MySQL Server 8.0.43 (App-Custom)
+After=network.target syslog.target
+
+[Install]
+WantedBy=multi-user.target
+
+[Service]
+# 运行身份
+User=mysql
+Group=mysql
+
+# 启动类型与 PID 文件
+Type=forking
+PIDFile=/app/mysql/data/mysqld.pid
+TimeoutSec=0
+
+# 环境变量（可选，方便后面写脚本）
+Environment="MYSQL_HOME=/app/mysql/mysql-8.0.43"
+Environment="MYSQL_CONF=/app/mysql/config/my.cnf"
+
+# 前置检查：目录权限 & 初始化
+# 若 data 目录为空，首次启动会自动执行 --initialize
+ExecStartPre=/bin/bash -c '\
+  if [ ! -f /app/mysql/data/mysql/user.frm ] && [ ! -f /app/mysql/data/ibdata1 ]; then \
+    /app/mysql/mysql-8.0.43/bin/mysqld --defaults-file=/app/mysql/config/my.cnf --initialize-insecure --user=mysql; \
+  fi'
+
+# 启动命令
+ExecStart=/app/mysql/mysql-8.0.43/bin/mysqld \
+          --defaults-file=/app/mysql/config/my.cnf \
+          --daemonize \
+          --pid-file=/app/mysql/data/mysqld.pid
+
+# 重载与停止
+ExecReload=/bin/kill -HUP $MAINPID
+ExecStop=/bin/kill -QUIT $MAINPID
+
+# 重启策略
+Restart=on-failure
+RestartPreventExitStatus=1
+PrivateTmp=false
+
+# 重新加载 systemd 配置
+systemctl daemon-reload
+# 设置服务开机启动
+systemctl enable mysql
+# 启动服务
+systemctl start mysql
+```
+
+
+
+##### ai生成的my.cnf文件
+
+```ini
+#  MySQL 8.0.43  生产级常用配置  ——  64 GB 内存 / 16 核  为例
+#  如资源不同，把内存相关参数按比例调整即可
+# ===================================================================
+
+[mysqld]                                    # 服务器端配置段开始
+# --------- 基础目录 ---------
+basedir         = /app/mysql/mysql-8.0.43   # MySQL 安装根目录
+datadir         = /app/mysql/data           # 数据文件目录
+socket          = /app/mysql/tmp/mysql.sock # 本地连接 Unix 套接字路径
+pid-file        = /app/mysql/data/mysqld.pid# 守护进程 pid 文件
+tmpdir          = /app/mysql/tmp            # 内部临时表/文件落盘路径
+secure-file-priv= /app/mysql/tmp            # LOAD DATA、SELECT … OUTFILE 可读写目录
+
+# --------- 字符集 & 时区 ---------
+character-set-server = utf8mb4              # 默认字符集，支持 emoji
+collation-server     = utf8mb4_0900_ai_ci   # 默认排序规则（MySQL 8 新默认）
+default-time-zone    = '+8:00'              # 东八区，避免时区错乱
+
+# --------- 连接 ---------
+max_connections        = 1000               # 同时允许的最大连接数
+max_user_connections   = 950                # 单个用户最大连接数，防单账号打爆
+max_connect_errors     = 100000             # 某主机连错次数达到后屏蔽，防暴力破解
+back_log               = 512                # TCP 监听队列长度，高并发时加大
+interactive_timeout    = 600                # 交互式连接空闲多久断开（秒）
+wait_timeout           = 600                # 非交互式连接空闲多久断开（秒）
+
+# --------- 内存 —— 按 64 GB 物理内存估算 ---------
+innodb_buffer_pool_size         = 48G       # InnoDB 缓存表+索引的核心内存，≈物理内存 70 %
+innodb_buffer_pool_instances    = 16        # 分成 16 个实例，减少锁竞争，与 cpu 核数一致
+innodb_log_buffer_size          = 64M       # Redo log 缓冲区，大事务场景加大
+key_buffer_size                 = 256M      # MyISAM 索引缓存（几乎不用，保留小值）
+tmp_table_size                  = 64M       # 内存临时表最大大小
+max_heap_table_size             = 64M       # MEMORY 引擎表最大大小
+sort_buffer_size                = 2M        # 单个线程排序缓冲区，太小会落盘
+read_buffer_size                = 2M        # 顺序读缓冲区
+read_rnd_buffer_size            = 4M        # 随机读缓冲区，如排序后回表
+join_buffer_size                = 2M        # 无索引 join 时用的缓冲区
+thread_cache_size               = 100       # 线程缓存，减少频繁创建销毁
+
+# --------- Redo Log —— 提高写性能 ---------
+innodb_log_file_size   = 2G                 # 单个 redo 文件大小，大事务场景加大
+innodb_log_files_in_group = 2               # redo 文件个数，默认 2 即可
+innodb_flush_log_at_trx_commit = 2          # 0/1/2；2=每秒刷盘，兼顾安全与性能
+innodb_flush_method    = O_DIRECT           # 直接写盘，避免双缓冲
+
+# --------- Undo / 并发 ---------
+innodb_undo_tablespaces = 2                 # 拆成 2 个 undo 表空间，减少 ibdata1
+innodb_max_undo_log_size = 2G               # 单个 undo 表空间上限，超后自动截断
+innodb_purge_threads     = 4                # 后台 purge 线程数，高并发加大
+innodb_page_cleaners     = 4                # 脏页刷新线程数，与 buffer 实例数一致
+
+# --------- 事务隔离 & 锁 ---------
+transaction-isolation = READ-COMMITTED      # 默认隔离级别，减少间隙锁
+innodb_lock_wait_timeout = 50               # 行锁等待超时（秒）
+
+# --------- 复制（如做主从，再打开） ---------
+# server-id       = 1001                    # 集群内全局唯一
+# log_bin         = /app/mysql/binlog/mysql-bin  # 开启 binlog
+# binlog_format   = ROW                     # 行格式，最安全
+# binlog_expire_logs_seconds = 604800       # binlog 保留 7 天
+# gtid_mode       = ON                      # 开启 GTID
+# enforce_gtid_consistency = ON             # GTID 一致性检查
+
+# --------- 日志 ---------
+log-error = /app/mysql/logs/error.log       # 错误日志路径
+slow_query_log     = 1                      # 启用慢查询日志
+slow_query_log_file= /app/mysql/logs/slow.log # 慢日志文件
+long_query_time    = 1                      # 超过 1 秒即记录
+log_queries_not_using_indexes = 1           # 记录未走索引的 SQL
+
+# --------- 表 & 优化器 ---------
+default_storage_engine = InnoDB             # 默认引擎
+innodb_file_per_table  = 1                  # 单表一个 ibd，便于回收空间
+innodb_stats_persistent = 1                 # 统计信息持久化，避免频繁计算
+innodb_stats_auto_recalc = 1                # 表变更超 10 % 自动更新统计信息
+
+# --------- 网络 ---------
+max_allowed_packet = 256M                   # 最大单包/字段大小，大字段场景加大
+net_buffer_length  = 32K                    # 初始网络缓冲区，后续自动扩展
+net_read_timeout   = 600                    # 读超时
+net_write_timeout  = 600                    # 写超时
+
+# --------- 安全 —— 按需再收紧 ---------
+local-infile = 0                            # 禁用 LOAD DATA LOCAL，防任意文件读
+skip-symbolic-links = 1                     # 禁用符号链接，防目录跳跃
+
+# ===================================================================
+[client]                                    # 客户端工具段
+socket          = /app/mysql/tmp/mysql.sock # 连本地服务端用的套接字
+default-character-set = utf8mb4             # 客户端默认字符集
+
+[mysql]                                     # 交互式 mysql 命令行段
+prompt="\\u@\\h [\\d]> "                    # 提示符格式：用户@主机 [库]>
+default-character-set = utf8mb4             # 命令行默认字符集
 ```
 
 
@@ -227,6 +501,10 @@ Bye
 ### mysql
 
 用来**连接**和**管理**数据库     mysql -u<用户名> -p<密码>
+
+```sql
+mysqld --shared-memory --skip-grant-tables #跳过权限验证登录mysql
+```
 
 
 
@@ -2589,16 +2867,9 @@ copy-back
 
 主服务器将所有数据和结构更改记录到二进制日志中。从属服务器从主服务器请求该二进制日志并在本地应用其内容。IO作用：请求主库，获取上一次执行过的新的事件，并存放到relaylog。SQL：从relaylog中将sql语句翻译给从库执行
 
-原理:
+为了减轻主库压力，从库主动探测master是否有更新数据的操作，如果有就通过IO线程要更新的SQL操作，mast通过dump线程给从库IO发送操作，从库接收到了先保存在中继日志中，后面sql线程读取中继日志再写入自己的库中
 
-- 通过change master to语句告诉从库主库的ip，port，user，password，file，pos
-- 从库通过start slave命令开启复制必要的IO线程和SQL线程
-- 从库通过IO线程拿着change master to用户密码相关信息，连接主库，验证合法性
-- 从库连接成功后，会根据binlog的pos问主库，有没有比这个更新的
-- 主库接收到从库请求后，比较一下binlog信息，如果有就将最新数据通过dump线程给从库IO线程
-- 从库通过IO线程接收到主库发来的binlog事件，存储到TCP/IP缓存中，并返回ACK更新master.info
-- 将TCP/IP缓存中的内容存到relay-log中
-- SQL线程读取relay-log.info，读取到上次已经执行过的relay-log位置点，继续执行后续的relay-log日志，执行完成后，更新relay-log.info
+原理:
 
 1. 当master节点接收到一个写请求时，此时会把写请求的更新操作都记录到binlog日志中。
 2. master节点会把数据复制给slave节点，这个过程，需要每个slave节点连接到master节点上，master节点就会为每一 slave节点分别创建一个binlog dump线程，用于向各个slave节点发送binlog日志。
@@ -3529,4 +3800,3 @@ COMMIT可能会导致失败，类似于快照事务隔离级别的失败场景;
 多主模式(也就是多写模式) 不支持SERIALIZABLE事务隔离级别;
 多主模式不能完全支持级联外键约束;
 多主模式不支持在不同节点上对同一个数据库对象并发执行DDL(在不同节点上对同一行并发进行RW事务，后发起的事务会失败);
-
