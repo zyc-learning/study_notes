@@ -307,9 +307,21 @@ $ kubectl delete kindName objName
 
 ## pod概念
 
-pod是一个或多个应用容器（例如docker）的组合，并且包含共享的存储卷、IP地址和有关如何运行它们的信息。
+pod是k8s中最小的管理元素，由一个或多个应用容器（例如docker）的组合，并且包含共享的存储卷、IP地址和有关如何运行它们的信息。
 
 pod是kubernetes抽象出来的，表示一组一个或者多个应用容器，以及这些容器的一些共享资源。
+
+
+
+pod状态
+
+```
+-- Pending: Pod创建过程中,但它尚未被调度完成
+-- Running: Pod中所有容器都被创建成功
+-- Completed或者successd: Pod所有容器都已经成功终止,并不会被重启
+-- Failed: Pod中的所有容器至少有一个容器退出是非0状态
+-- Unkown: 无法正常获取Pod对象的状态信息
+```
 
 
 
@@ -435,7 +447,7 @@ CNI通过JSON格式的配置文件来描述网络配置，当需要设置容器�
 
 #### 调度流程
 
-pod被调度到容器集群的某个节点上，节点的kubelet调用CRI插件来创建pod，CRI插件创建pod sandbos id与pod网络命名空间，CRI插件通过网络命名空间和pod sandbox id 来调用cni插件，cni插件配置pod网络（flannel cni插件->bridge cni -> 主机ipam cni插件->返回pod ip地址），然后把结果返回给plugin组件，创建pause容器并将其添加到pod网络命名空间，kubernetes调用CRI插件拉取应用容器镜像，容器进行时containerd拉取应用容器镜像，kubernetes调用CRI插件来启动应用容器，CRI插件调用容器进行时containerd来启动和配置在pod cgroup和namespace中的应用容器。
+pod被调度到容器集群的某个节点上，节点的kubelet调用CRI插件来创建pod，CRI插件创建pod sandbox id与pod网络命名空间，CRI插件通过网络命名空间和pod sandbox id 来调用cni插件，cni插件配置pod网络（flannel cni插件->bridge cni -> 主机ipam cni插件->返回pod ip地址），然后把结果返回给plugin组件，创建pause容器并将其添加到pod网络命名空间，kubernetes调用CRI插件拉取应用容器镜像，容器进行时containerd拉取应用容器镜像，kubernetes调用CRI插件来启动应用容器，CRI插件调用容器进行时containerd来启动和配置在pod cgroup和namespace中的应用容器。
 
 
 
@@ -472,17 +484,17 @@ Calico是一个纯三层的虚拟网络，它没有复用docker的docker0网桥�
 ##### calico架构
 
 - Felix
-  
+
   管理网络接口、编写路由、编写ACL、报告状态
-  
+
 - bird（BGPClient）
-  
+
   BGPClient将通过BGP协议⼴播告诉剩余calico节点，从而实现网络互通
-  
+
 - confd
-  
+
   通过监听etcd以了解BGP配置和全局默认值的更改。Confd根据ETCD中数据的更新，动态生成BIRD配置文件。当配置文件更改时，confd触发BIRD重新加载新文件
-  
+
 - etcd
 
   分布式键值存储，主要负责网络元数据一致性，确保Calico网络状态的准确性，可以与kubernetes共用；
@@ -592,6 +604,8 @@ value: "Never"
 
 
 # 三、安装
+
+找到了比较细致的安装文章https://developer.aliyun.com/article/1671272?spm=a2c6h.24874632.expert-profile.67.78566d34JH6nHX
 
 ## 安装方式
 
@@ -920,6 +934,129 @@ kubectl set env daemonset/calico-node -n kube-system IP_AUTODETECTION_METHOD=can
 mode: ipvs
 
 kubectl delete pod -n kube-system -l k8s-app=kube-proxy
+```
+
+
+
+## 卸载
+
+### 停止kubernetes
+
+```bash
+# 在master上移除节点
+kubectl drain <节点名> --delete-local-data --force --ignore-daemonsets
+kubectl delete node <节点名>
+
+#停止服务
+systemctl stop kubelet
+systemctl stop etcd
+systemctl stop docker
+systemctl stop containerd
+systemctl stop crio.service #停止容器运行时
+```
+
+
+
+### 清空kubernetes集群设置
+
+```bash
+kubeadm reset -f
+```
+
+
+
+### 删除kubernetes相关软件
+
+```bash
+yum list installed|grep kube #查找kube关键字的软件
+yum -y remove kube*  # 卸载相关软件包括(kubeadm，kubelet，kubctl)
+yum list installed|grep kube #直到确认到所有kube关键字软件卸载干净
+```
+
+
+
+### 删除docker
+
+```bash
+# 卸载Docker Engine、CLI、Containerd和Docker合成包
+yum -y remove docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin docker-ce-rootless-extras
+
+# 删除容器，镜像和卷
+rm -rf /var/lib/docker
+rm -rf /var/lib/containerd
+rm -rf /etc/docker
+rm -rf /etc/containerd
+```
+
+
+
+### 彻底删除相关文件
+
+```bash
+#删除kubelet相关文件
+sudo rm -rvf $HOME/.kube
+sudo rm -rvf ~/.kube/
+sudo rm -rvf /etc/kubernetes/
+sudo rm /usr/bin/kubelet
+sudo rm -rvf /etc/systemd/system/kubelet.service.d
+sudo rm -rvf /etc/systemd/system/kubelet.service
+sudo rm -rvf /usr/bin/kube*
+sudo rm -rf /var/lib/kubelet
+sudo rm -rf /var/log/containers
+sudo rm -rf /var/log/pods
+
+# 删除网络插件
+sudo rm -rf /var/lib/cni
+sudo rm -rvf /etc/cni
+sudo rm -rvf /opt/cni
+
+#删除etcd
+sudo rm -rvf /var/lib/etcd
+sudo rm -rvf /var/etcd
+
+#删除容器运行时
+sudo rm -rf /usr/local/bin
+sudo rm -rf /usr/local/lib
+sudo rm -rf /usr/local/share
+sudo rm -rf /usr/libexec/crio
+sudo rm -rf /etc/crio
+sudo rm -rf /etc/containers
+
+额外删除:手动清除registry容器进程
+ps aux | grep registry
+
+其他相关
+# 查询
+ps aux | grep containerd-shim
+# 删除
+killall containerd-shim
+# 查询
+systemctl list-units --type=slice | grep kubepods
+# 删除
+systemctl isolate --user kubepods.slice
+systemctl stop kubepods.slice
+systemctl disable kubepods.slice
+```
+
+
+
+### 验证删除完成
+
+```bash
+systemctl status docker
+systemctl | grep kube
+#对于systemctl停不掉的进程，可以通过lsof -i:端口号查找PID，然后kill掉
+
+yum list installed|grep kube
+yum list installed|docker
+
+rpm -qa|grep kube
+rpm -qa|grep docker
+# 如果以上命令执行后都没有任何输出，那就说明K8S已经彻底卸载完成
+
+#清理systemd配置
+systemctl daemon-reexec
+systemctl daemon-reload
 ```
 
 
@@ -2306,6 +2443,7 @@ Deployment同时也可以确保只创建出超过期望数量的⼀定数量的P
 Recreate：在创建出新的Pod之前会先杀掉所有已存在的Pod
 
 rollingUpdate：滚动更新，就是杀死一部分，就启动一部分，在更新过程中，存在两个版本Pod
+
 - maxSurge：指定超出副本数有⼏个，两种⽅式：1、指定数量2、百分比
 - maxUnavailable：最多有⼏个不可⽤
 
@@ -3781,32 +3919,32 @@ $ kubectl logs -f volume-emptydir -c busybox
 ##### 共享内存
 
    ```yaml
-    apiVersion: v1
-    kind: Pod
-    metadata:
-      name: volume-emptydir-mem
-      namespace: default
-    spec:
-      containers:
-      - name: myapp
-        image: wangyanglinux/myapp:v1.0
-        ports:
-        - containerPort: 80
-          resources:
-          limits:  # 限制为一核一G
-            cpu: "1"
-            memory: 1024Mi
-          requests:
-            cpu: "1"
-            memory: 1024Mi
-          volumeMounts:  #挂载卷
-        - name: mem-volume
-          mountPath: /data
-     volumes:
-      - name: mem-volume
-        emptyDir: # 基于emptydir
-          medium: Memory
-          sizeLimit: 500Mi  # 可使用的最大内存大小
+ apiVersion: v1
+ kind: Pod
+ metadata:
+   name: volume-emptydir-mem
+   namespace: default
+ spec:
+   containers:
+   - name: myapp
+     image: wangyanglinux/myapp:v1.0
+     ports:
+     - containerPort: 80
+       resources:
+       limits:  # 限制为一核一G
+         cpu: "1"
+         memory: 1024Mi
+       requests:
+         cpu: "1"
+         memory: 1024Mi
+       volumeMounts:  #挂载卷
+     - name: mem-volume
+       mountPath: /data
+  volumes:
+   - name: mem-volume
+     emptyDir: # 基于emptydir
+       medium: Memory
+       sizeLimit: 500Mi  # 可使用的最大内存大小
    ```
 
 
@@ -4730,6 +4868,7 @@ Secret对象类型⽤来保存敏感信息，例如密码、OAuth令牌和SSH密
   
 
 Secret的内置类型有如下表
+
 | 内置类型                            | 用法                                  |
 | :---------------------------------- | :------------------------------------ |
 | Opaque                              | 用户定义的任意数据                    |
@@ -6012,23 +6151,16 @@ FIELDS:
 
 ## 访问控制概述
 
-Kubernetes作为一个分布式集群的管理工具，保证集群的安全性是其一个重要的任务。所谓的安全性其实就是保证对Kubernetes的各种**客户端**进行**认证和鉴权**操作。
-
-**客户端**
-
-在Kubernetes集群中，客户端通常有两类：
-
-- **User Account**：一般是独立于kubernetes之外的其他服务管理的用户账号。
-- **Service Account**：kubernetes管理的账号，用于为Pod中的服务进程在访问Kubernetes时提供身份标识。
+Kubernetes作为一个分布式集群的管理工具，保证集群的安全性是其一个重要的任务。API Server 是集群内部各个组件通信的中介，也是外部控制的入口。所以 Kubernetes 的安全机制基本就是围绕保护 API Server 来设计的。
 
 
 
-**认证、授权与准入控制**
+### 安全机制的实现
 
 ApiServer是访问及管理资源对象的唯一入口。任何一个请求访问ApiServer，都要经过下面三个流程：
 
 - Authentication（认证）：身份鉴别，只有正确的账号才能够通过认证
-- Authorization（授权）： 判断用户是否有权限对访问的资源执行特定的动作
+- Authorization（鉴权）： 判断用户是否有权限对访问的资源执行特定的动作
 - Admission Control（准入控制）：用于补充授权机制以实现更加精细的访问控制功能。
 
 
@@ -6046,22 +6178,83 @@ Kubernetes集群安全的最关键点在于如何识别并认证客户端身份�
 
 
 
-**HTTPS认证大体分为3个过程：**
+### 双向HTTPS认证
 
-- 证书申请和下发
-  - HTTPS通信双方的服务器向CA机构申请证书，CA机构下发根证书、服务端证书及私钥给申请者
-- 客户端和服务端的双向认证
-  - 客户端向服务器端发起请求，服务端下发自己的证书给客户端，
-  - 客户端接收到证书后，通过私钥解密证书，在证书中获得服务端的公钥，
-  - 客户端利用服务器端的公钥认证证书中的信息，如果一致，则认可这个服务器
-  - 客户端发送自己的证书给服务器端，服务端接收到证书后，通过私钥解密证书，
-  - 在证书中获得客户端的公钥，并用该公钥认证证书信息，确认客户端是否合法
+1.客户端向服务端发起请求，请求里要发送一个包含客户端支持的https版本的随机值，然后服务端选择双方都支持的https版本，返回版本号和一个公钥/证书。
 
-- 服务器端和客户端进行通信
-  - 服务器端和客户端协商好加密方案后，客户端会产生一个随机的秘钥并加密，然后发送到服务器端。
-  - 服务器端接收这个秘钥后，双方接下来通信的所有内容都通过该随机秘钥加密
+2.客户端接收到公钥以后，拿着自己的CA，对接收到的公钥进行验证（是否可信，不可信的话，浏览器就会提醒）
 
-> 注意: Kubernetes允许同时配置多种认证方式，只要其中任意一个方式认证通过即可
+3.客户端将自己的CA证书放在公钥中发送给服务端，对接收到的公钥进行解密，确认对方身份
+
+4.客户端发送当前客户端支持的对称加密的算法，服务器中选择一个对称加密的算法返回给客户端
+
+5.客户端创建一串随机的字符串作为对称加密的密钥，通过公钥将这串对称加密的密钥发送给服务器端
+
+6.服务器接收到密钥，通过公钥解密，得到对称加密的密钥
+
+7.双方使用对称加密进行数据交换
+
+
+
+### 需要认证的节点
+
+kubernetes组件对api server的访问：kubectl、control manager、scheduler、kubectl、kubelet、kube-proxy
+
+kubernetes管理的pod对容器的访问：pod
+
+
+
+但是，**一定需要吗？**
+
+基于kubeadm工作方式安装的集群：control manager、scheduler与api server在同一台机器，所以直接使用api server的非安全端口访问，`--insecure-bind-address=127.0.0.1`。
+
+kubectl（自动颁发）、kubelet、kube-proxy（这两个手动颁发）访问api server就需要证书进行https双向认证
+
+
+
+### 证书的签发模式
+
+手动签发：通过K8s集群的跟CA进行签发HTTPS证书
+
+自动签发：kubelet首次访问api server时，使用token做认证，通过以后，control manager会为kubelet生成一个证书，以后的访问都是用证书做认证。（使用kubeadm安装的集群，中间首次访问是kubeadm帮用户完成的）
+
+例子
+
+```bash
+kubeadm join 192.168.173.100:6443 --token jghzcm.mz6js92jom1flry0 \ #用于api server识别kubelet是否合法
+        --discovery-token-ca-cert-hash sha256:63253f3d82fa07022af61bb2ae799177d2b0b6fe8398d5273098f4288ce67793  \ # 用于kubelet确认api server发送来的证书是否合法
+        --cri-socket unix:///var/run/cri-dockerd.sock
+```
+
+
+
+### kubeconfig——存放认证信息
+
+kubeconfig文件包括集群参数（CA证书，api server地址），客户端参数（生成的证书和私钥），集群context信息（集群名称、用户名）。kubernetes组件通过启动时指定不同的kubeconfig文件可以切换到不同的集群
+
+/etc/kubernetes/admin.conf是存放管理员相关的信息凭据。包含当前集群的CA证书、集群的地址和端口、集群名字；用户的名字、用户的证书、用户的私钥；中间的context（上下文）将集群信息和用户信息关联，admin.conf的用户是kubernetes-admin，集群名是kubernetes，切换到这个配置文件里意味着使用kubernetes-admin的用户凭据登陆到kubernetes的集群
+
+
+
+### service account
+
+pod中的容器访问api server，因为pod的创建、销毁是动态的，所以要为它手动生成证书就不可行了，kubernetes使用了service account解决pod访问api service的认证问题
+
+
+
+#### service account的组成
+
+Kubernetes 设计了一种资源对象叫做 Secret，分为两类，一种是用于 ServiceAccount 的 service account-token， 另一种是用于保存用户自定义保密信息的 Opaque。ServiceAccount 中用到包含三个部分：Token、ca.crt、namespace
+
+```
+token 是使用 API Server 私钥签名的 JWT。用于访问 API Server 时，Server 端认证
+ca.crt，根证书。用于 Client 端验证 API Server 发送的证书
+namespace, 标识这个 service-account-token 的作用域名空间
+```
+
+Json web token (JWT) , 是为了在网络应用环境间传递声明而执行的一种基于JSON 的开放标准（[(RFC 7519] ).该token特别适用于分布式站点的单点登录（**SSO：用户只需要登陆一次，就可以访问多个应用系统**）场景。JWT的声明一般被用来在身份提供者和服务提供者间传递被认证的用户身份信息，以便于从资源服务器获取资源，也可以增加一些额外的其它业务逻辑所必须的声明信息，该 token 也可直接被用于认证，也可被加密
+
+默认情况下，每个 namespace 都会有一个 ServiceAccount，如果 Pod 在创建时没有指 ServiceAccount，就会使用 Pod 所属的 namespace 的 ServiceAccount  默认挂载目录： /run/secrets/kubernetes.io/serviceaccount/
 
 
 
@@ -6080,7 +6273,11 @@ API Server目前支持以下几种授权策略：
 - Node：是一种专用模式，用于对kubelet发出的请求进行访问控制
 - RBAC：基于角色的访问控制（kubeadm安装方式下的默认选项）
 
-RBAC(Role-Based Access Control) 基于角色的访问控制，主要是在描述一件事情：**给哪些对象授予了哪些权限**
+
+
+### RBAC
+
+RBAC(Role-Based Access Control)是基于角色的访问控制，主要是在描述一件事情：**给哪些对象授予了哪些权限**，权限与角色是多对多的关系。用户和角色关联，角色和执行权限关联
 
 其中涉及到了下面几个概念：
 
@@ -6090,14 +6287,84 @@ RBAC(Role-Based Access Control) 基于角色的访问控制，主要是在描述
 
 
 
+RBAC的优势：
+
+```
+对集群中的资源和非资源均拥有完整的覆盖
+整个 RBAC 完全由几个 API 对象完成，同其它 API 对象一样，可以用 kubectl 或 API 进行操作
+可以在运行时进行调整，无需重启 API Server
+```
+
+
+
 RBAC引入了4个顶级资源对象：
 
 - Role、ClusterRole：角色，用于指定一组权限
 - RoleBinding、ClusterRoleBinding：角色绑定，用于将角色（权限）赋予给对象
 
-**Role、ClusterRole**
 
-一个角色就是一组权限的集合，这里的权限都是许可形式的（白名单）。
+
+RBAC的三种组合方式：
+
+角色配合角色绑定：
+
+集群角色配合集群绑定
+
+集群角色配合角色绑定（限制作用域）：用户是集群角色，权限大，但是绑定到了角色绑定，权限范围仅限当前命名空间
+
+
+
+#### 创建SA的方法
+
+```shell
+kubectl create sa xxx -n namespace 
+kubectl create sa xxx -n default --dry-run -o yaml
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+   creationTimestamp: null
+   name: xxx
+   namespace: default
+```
+
+
+
+#### 添加用户
+
+```json
+{
+    "CN": "admin",   //用户名
+    "hosts": [],     //证书可访问地址
+    "key": {
+        "algo": "rsa",
+        "size": 2048
+    },
+    "name":[{
+        "C": "CN",
+        "ST": "HangZhou",
+        "L": "XS",
+        "O": "system: master",    //用户组
+        "OU": "System"
+    }
+   ]
+}
+```
+
+
+
+#### Role、ClusterRole
+
+在 RBAC API 中，Role 表示一组规则权限，权限只会增加(累加权限)，不存在一个资源一开始就有很多权限而通过 RBAC 对其进行减少的操作；Role 可以定义在一个 namespace 中，如果想要跨 namespace则可以创建 ClusterRole
+
+ClusterRole 具有与 Role 相同的权限角色控制能力，不同的是 ClusterRole 是集群级别的，
+
+ClusterRole 可以用于：
+
+- 集群级别的资源控制( 例如 node 访问权限 )
+
+- 非资源型 endpoints( 例如 `/health` 访问 )
+
+- 所有命名空间资源控制(例如 pods )
 
 ```yaml
 # Role只能对命名空间内的资源进行授权，需要指定nameapce
@@ -6110,6 +6377,7 @@ rules:
 - apiGroups: [""]  # 支持的API组列表,"" 空字符串，表示核心API群
   resources: ["pods"] # 支持的资源对象列表
   verbs: ["get", "watch", "list"] # 允许的对资源对象的操作方法列表
+
 # ClusterRole可以对集群范围内资源、跨namespaces的范围资源、非资源类型进行授权
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
@@ -6145,69 +6413,72 @@ rules:
 
 
 
-**RoleBinding、ClusterRoleBinding**
+#### RoleBinding + Role
 
-角色绑定用来把一个角色绑定到一个目标对象上，绑定目标可以是User、Group或者ServiceAccount。
+RoloBinding 可以将角色中定义的权限授予用户或用户组，RoleBinding 包含一组权限列表(subjects)，权限列表中包含有不同形式的待授予权限资源类型(users, groups, or service accounts)；RoloBinding 同样包含对被 Bind 的 Role 引用；RoleBinding 适用于某个命名空间内授权，而ClusterRoleBinding 适用于集群范围内的授权
 
 ```yaml
-# RoleBinding可以将同一namespace中的subject绑定到某个Role下，则此subject即具有该Role定义的权限
-kind: RoleBinding
+  apiVersion: rbac.authorization.k8s.io/v1
+  kind: RoleBinding
+  metadata:
+    namespace: default
+    name: authorization-role
+ subjects:
+   - kind: User
+     name: jane
+     apiGroup: rbac.authorization.k8s.io
+ roleRef:
+   kind: Role
+   name: authorization-role
+   apiGroup: rbac.authorization.k8s.io
+```
+
+  
+
+**RoleBinding + ClusterRole** 
+
+RoleBinding 同样可以引用 ClusterRole 来对当前 namespace 内用户、用户组或 ServiceAccount 进行授权，这种操作允许集群管理员在整个集群内定义一些通用的 ClusterRole，然后在不同的 namespace中使用 RoleBinding 来引用
+
+```yaml
 apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
 metadata:
-  name: authorization-role-binding
   namespace: dev
+  name: authorization-role
 subjects:
-- kind: User
-  name: eagle
-  apiGroup: rbac.authorization.k8s.io
+  - kind: User
+    name: jane
+    apiGroup: rbac.authorization.k8s.io
 roleRef:
-  kind: Role
+  kind: ClusterRole
   name: authorization-role
   apiGroup: rbac.authorization.k8s.io
-# ClusterRoleBinding在整个集群级别和所有namespaces将特定的subject与ClusterRole绑定，授予权限
-kind: ClusterRoleBinding
-apiVersion: rbac.authorization.k8s.io/v1
-metadata:
- name: authorization-clusterrole-binding
-subjects:
-- kind: User
-  name: eagle
-  apiGroup: rbac.authorization.k8s.io
-roleRef:
-  kind: ClusterRole
-  name: authorization-clusterrole
-  apiGroup: rbac.authorization.k8s.io
 ```
 
 
 
-**RoleBinding引用ClusterRole进行授权**
+#### ClusterRoleBinding + ClusterRole
 
-RoleBinding可以引用ClusterRole，对属于同一命名空间内ClusterRole定义的资源主体进行授权。
-
-一种很常用的做法就是，集群管理员为集群范围预定义好一组角色（ClusterRole），然后在多个命名空间中重复使用这些ClusterRole。这样可以大幅提高授权管理工作效率，也使得各个命名空间下的基础性授权规则与使用体验保持一致。
+使用 ClusterRoleBinding 可以对整个集群中的所有命名空间资源权限进行授权；以下ClusterRoleBinding 样例展示了授权 manager 组内所有用户在全部命名空间中对 secrets 进行访问
 
 ```yaml
-# 虽然authorization-clusterrole是一个集群角色，但是因为使用了RoleBinding
-# 所以eagle只能读取dev命名空间中的资源
-kind: RoleBinding
 apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
 metadata:
-  name: authorization-role-binding-ns
-  namespace: dev
+  name: authorization-role
 subjects:
-- kind: User
-  name: eagle
-  apiGroup: rbac.authorization.k8s.io
+  - kind: Group
+    name: manager
+    apiGroup: rbac.authorization.k8s.io
 roleRef:
-  kind: ClusterRole
-  name: authorization-clusterrole
-  apiGroup: rbac.authorization.k8s.io
+   kind: ClusterRole
+   name: authorization-role
+   apiGroup: rbac.authorization.k8s.io
 ```
 
 
 
-**实战：创建一个只能管理dev空间下Pods资源的账号**
+#### 实战：创建一个只能管理dev空间下Pods资源的账号
 
 1) 创建账号
 
@@ -6302,9 +6573,43 @@ Switched to context "kubernetes-admin@kubernetes".
 
 
 
+### Resources
+
+Kubernetes 集群内一些资源一般以其名称字符串来表示，这些字符串一般会在 API 的 URL 地址中出现；同时某些资源也会包含子资源，例如 logs 资源就属于 pods 的子资源，API 中 URL 样例如下
+
+```
+GET /api/v1/namespace/{namespace}/pods/{name}/log
+```
+
+如果要在 RBAC 授权模型中控制这些子资源的访问权限，可以通过 / 分隔符来实现，以下是一个定义pods 资资源 logs 访问权限的 Role 定义样例
+
+```yaml
+kind: Role
+apiVersion: rbac.authorization.k8s.io/v1
+metadata:
+  namespace: default
+  name: pod-and-pod-logs-reader
+rules:
+  - apiGroups: [""]
+    resources: ["pods/log"]
+    verbs: ["get","list"]
+```
+
+
+
+### Subjects
+
+RoleBinding 和 ClusterRoleBinding 可以将 Role 绑定到 Subjects；Subjects 可以是 groups、users或者 service accounts
+
+Subjects 中 Users 使用字符串表示，它可以是一个普通的名字字符串，如 “alice” ；也可以是 email格式的邮箱地址，如 “ xxx@163.com” ；甚至是一组字符串形式的数字 ID 。但是 Users 的前缀 system: 是系统保留的，集群管理员应该确保普通用户不会使用这个前缀格式
+
+Groups 书写格式与 Users 相同，都为一个字符串，并且没有特定的格式要求；同样 system: 前缀为系统保留
+
+
+
 ## 准入控制
 
-通过了前面的认证和授权之后，还需要经过准入控制处理通过之后，apiserver才会处理这个请求。
+准入控制是API Server的插件集合，通过添加不同的插件，实现额外的准入控制规则。甚至于API Server的一些主要的功能都需要通过 Admission Controllers 实现，比如 ServiceAccount。准入控制的作用：添加额外的功能，比如SA；过滤有权限但是不合理的行为。
 
 准入控制是一个可配置的控制器列表，可以通过在Api-Server上通过命令行设置选择执行哪些准入控制器：
 
@@ -6505,6 +6810,7 @@ Kuboard 提供了图形化的工作负载编辑界面，用户无需陷入繁琐
 **套件扩展**
 
   Kuboard 提供了必要的套件库，使得用户可以根据自己的需要扩展集群的管理能力。当前提供的套件有：
+
   - 资源层监控套件，基于 Prometheus / Grafana 提供 K8S 集群的监控能力，可以监控集群、节点、工作负载、容器组等各个级别对象的 CPU、内存、网络、磁盘等资源的使用情况；
 
   - 日志聚合套件，基于 Grafana / Loki / Promtail 实现日志聚合；
